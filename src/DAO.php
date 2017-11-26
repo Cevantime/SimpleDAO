@@ -113,7 +113,7 @@ class DAO
         if (!$this->entityClassName) {
             $className = get_class($this);
             $segments = explode('\\', $className);
-            $entityName = str_replace('Dao', '', array_pop($segments));
+            $entityName = str_replace(array('Dao', 'DAO'), '', array_pop($segments));
             array_pop($segments);
             $this->entityClassName = implode('\\', $segments) . '\\Entity\\' . $entityName;
         }
