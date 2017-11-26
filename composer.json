@@ -1,5 +1,5 @@
 {
-    "name": "Cevantime/PHPSimpleDAO",
+    "name": "cevantime/simpledao",
     "description": "A very basic DAO based on PDO",
     "license": "MIT",
     "type": "library",
