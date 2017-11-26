@@ -50,6 +50,7 @@ class DAO
 
         $this->setTableName($tableName);
     }
+
     /**
      * 
      * @return string
@@ -142,6 +143,48 @@ class DAO
     }
 
     /**
+     * Get an entity array from a PDOStatement
+     * @param \PDOStatement $query
+     */
+    public function getEntities($query)
+    {
+        $query->execute();
+
+        $data = $query->fetchAll();
+
+        if (!$data) {
+            return $data;
+        }
+
+        $entities = [];
+
+        foreach ($data as $value) {
+            $entities[] = $this->buildEntity($value);
+        }
+
+        return $entities;
+    }
+
+    /**
+     * Get one entity from a PDOStatement
+     * @param \PDOStatement $query
+     */
+    public function getEntity($query)
+    {
+        $query->execute();
+        
+        $data = $query->fetch();
+
+        $query->closeCursor();
+
+        if (!$data) {
+            return $data;
+        }
+
+        return $this->buildEntity($data);
+    }
+
+    /**
      * Finds an entity using the pk param
      * @param integer $id
      * @return object entity
@@ -160,21 +203,7 @@ class DAO
      */
     public function findMany(array $criteria = array(), $limit = null, $offset = null)
     {
-        $query = $this->prepareSelect($criteria, $limit, $offset);
-
-        $data = $query->fetchAll();
-
-        if (!$data) {
-            return $data;
-        }
-
-        $entities = [];
-
-        foreach ($data as $value) {
-            $entities[] = $this->buildEntity($value);
-        }
-
-        return $entities;
+        $this->getEntities($this->prepareSelect($criteria, $limit, $offset));
     }
 
     /**
@@ -184,17 +213,7 @@ class DAO
      */
     public function findOne(array $criteria = array())
     {
-        $query = $this->prepareSelect($criteria, 1);
-
-        $data = $query->fetch();
-
-        $query->closeCursor();
-
-        if (!$data) {
-            return $data;
-        }
-
-        return $this->buildEntity($data);
+        return $this->getEntity($this->prepareSelect($criteria, 1));
     }
 
     /**
@@ -236,8 +255,6 @@ class DAO
             $query->bindParam($i++, $limit, \PDO::PARAM_INT);
         }
 
-        $query->execute();
-
         return $query;
     }
 
@@ -250,6 +267,7 @@ class DAO
     public function save($entity)
     {
         $idGetter = 'get' . $this->camelize($this->primary);
+
         if (method_exists($entity, $idGetter)) {
             $id = $entity->$idGetter();
         }
@@ -306,11 +324,11 @@ class DAO
         $res = $query->execute();
 
         $idSetter = 'set' . $this->camelize($this->primary);
-        
+
         if (method_exists($entity, $idSetter)) {
             $entity->$idSetter($this->db->lastInsertId());
         }
-        
+
         return $res;
     }
 
@@ -342,7 +360,7 @@ class DAO
         }
 
         if (!$data) {
-            return;
+            return 0;
         }
 
         $values = [];
