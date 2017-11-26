@@ -1,0 +1,19 @@
+{
+    "name": "Cevantime/PHPSimpleDAO",
+    "description": "A very basic DAO based on PDO",
+    "license": "MIT",
+    "type": "library",
+    "require": {
+        "php": ">=7.0"
+    },
+    "authors": [
+        {
+            "name": "Thibault Truffert",
+            "email": "thibaulttruffert@hotmail.com",
+            "role": "Developer"
+        }
+    ],
+    "autoload": {
+        "psr-0": { "SimpleDAO": "src/" }
+    }
+}
