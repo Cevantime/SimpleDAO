@@ -203,7 +203,7 @@ class DAO
      */
     public function findMany(array $criteria = array(), $limit = null, $offset = null)
     {
-        $this->getEntities($this->prepareSelect($criteria, $limit, $offset));
+         return $this->getEntities($this->prepareSelect($criteria, $limit, $offset));
     }
 
     /**
