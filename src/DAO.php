@@ -295,7 +295,7 @@ class DAO
         foreach ($columns as $col) {
             $getterName = 'get' . $this->camelize($col);
             if (method_exists($entity, $getterName)) {
-                $data[$col] = $entity->$getterName();
+                $data["`$col`"] = $entity->$getterName();
             } else {
                 continue;
             }
@@ -343,7 +343,7 @@ class DAO
 
         $sql = 'UPDATE ' . $this->getTableName() . ' SET ';
 
-        $where = "WHERE {$this->primary} = ?";
+        $where = "WHERE `{$this->primary}` = ?";
 
         $data = [];
 
@@ -366,7 +366,7 @@ class DAO
         $values = [];
 
         foreach ($data as $col => $value) {
-            $values[] = $col . ' = ?';
+            $values[] = '`'.$col . '` = ?';
         }
 
         $sql .= implode(', ', $values) . ' ' . $where;
