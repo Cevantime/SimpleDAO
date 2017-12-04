@@ -224,22 +224,10 @@ class DAO
      * @param type $offset
      * @return type
      */
-    protected function prepareSelect($criteria = array(), $limit = null, $offset = null)
+    protected function prepareSelect($criteria = array(), $limit = null, $offset = null, $order = "")
     {
-        $sql = 'SELECT * FROM ' . $this->getTableName();
 
-        if (is_array($criteria) && $criteria) {
-            $sql .= ' WHERE ' . implode(' AND ', array_keys($criteria));
-        }
-
-
-        if ($limit && $offset) {
-            $sql .= ' LIMIT ?, ?';
-        } else if ($limit) {
-            $sql .= ' LIMIT ?';
-        }
-
-        $query = $this->db->prepare($sql);
+        $query = $this->db->prepare($this->buildSQL());
 
         $i = 1;
         if (is_array($criteria) && $criteria) {
@@ -256,6 +244,26 @@ class DAO
         }
 
         return $query;
+    }
+    
+    protected function buildSQL($criteria = array(), $limit = null, $offset = null, $order = "")
+    {
+        $sql = 'SELECT * FROM ' . $this->getTableName();
+
+        if (is_array($criteria) && $criteria) {
+            $sql .= ' WHERE ' . implode(' AND ', array_keys($criteria));
+        }
+
+
+        if ($limit && $offset) {
+            $sql .= ' LIMIT ?, ?';
+        } else if ($limit) {
+            $sql .= ' LIMIT ?';
+        }
+        
+        $sql .= $order;
+        
+        return $sql;
     }
 
     /**
@@ -277,6 +285,7 @@ class DAO
         } else {
             return $this->insert($entity);
         }
+        
     }
 
     /**
