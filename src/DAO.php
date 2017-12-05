@@ -227,20 +227,20 @@ class DAO
     protected function prepareSelect($criteria = array(), $limit = null, $offset = null, $order = "")
     {
 
-        $query = $this->db->prepare($this->buildSQL());
+        $query = $this->db->prepare($this->buildSQL($criteria, $limit, $offset, $order));
 
         $i = 1;
         if (is_array($criteria) && $criteria) {
             foreach ($criteria as $val) {
-                $query->bindParam($i++, $val);
+                $query->bindValue($i++, $val);
             }
         }
 
         if ($limit && $offset) {
-            $query->bindParam($i++, $limit, \PDO::PARAM_INT);
-            $query->bindParam($i++, $limit, \PDO::PARAM_INT);
+            $query->bindValue($i++, $limit, \PDO::PARAM_INT);
+            $query->bindValue($i++, $limit, \PDO::PARAM_INT);
         } else if ($limit) {
-            $query->bindParam($i++, $limit, \PDO::PARAM_INT);
+            $query->bindValue($i++, $limit, \PDO::PARAM_INT);
         }
 
         return $query;
