@@ -45,7 +45,11 @@ class DAO
         $this->db = $db;
 
         if (null === $tableName) {
-            $tableName = $this->guessTableName();
+            if($this->tableName){
+                $tableName = $this->tableName;
+            } else {
+                $tableName = $this->guessTableName();
+            }
         }
 
         $this->setTableName($tableName);
