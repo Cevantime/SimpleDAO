@@ -45,7 +45,7 @@ class DAO
         $this->db = $db;
 
         if (null === $tableName) {
-            if($this->tableName){
+            if ($this->tableName) {
                 $tableName = $this->tableName;
             } else {
                 $tableName = $this->guessTableName();
@@ -176,7 +176,7 @@ class DAO
     public function getEntity($query)
     {
         $query->execute();
-        
+
         $data = $query->fetch();
 
         $query->closeCursor();
@@ -207,7 +207,7 @@ class DAO
      */
     public function findMany(array $criteria = array(), $limit = null, $offset = null)
     {
-         return $this->getEntities($this->prepareSelect($criteria, $limit, $offset));
+        return $this->getEntities($this->prepareSelect($criteria, $limit, $offset));
     }
 
     /**
@@ -249,7 +249,7 @@ class DAO
 
         return $query;
     }
-    
+
     protected function buildSQL($criteria = array(), $limit = null, $offset = null, $order = "")
     {
         $sql = 'SELECT * FROM ' . $this->getTableName();
@@ -264,9 +264,9 @@ class DAO
         } else if ($limit) {
             $sql .= ' LIMIT ?';
         }
-        
+
         $sql .= $order;
-        
+
         return $sql;
     }
 
@@ -289,7 +289,6 @@ class DAO
         } else {
             return $this->insert($entity);
         }
-        
     }
 
     /**
@@ -379,7 +378,7 @@ class DAO
         $values = [];
 
         foreach ($data as $col => $value) {
-            $values[] = '`'.$col . '` = ?';
+            $values[] = '`' . $col . '` = ?';
         }
 
         $sql .= implode(', ', $values) . ' ' . $where;
@@ -402,6 +401,24 @@ class DAO
 
         $query->bindValue($i++, $id);
 
+        return $query->execute();
+    }
+
+    public function delete($entity)
+    {
+        $sql = 'DELETE FROM `'.$this->getTableName().'` WHERE `'.$this->primary.'` = ?';
+        $query = $this->db->prepare($sql);
+        
+         $idGetter = 'get' . $this->camelize($this->primary);
+         
+         if (method_exists($entity, $idGetter)) {
+            $id = $entity->$idGetter();
+        } else {
+            return 0;
+        }
+         
+        $query->bindValue(1, $id);
+        
         return $query->execute();
     }
 
