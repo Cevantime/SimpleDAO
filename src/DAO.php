@@ -37,22 +37,47 @@ class DAO
 
     /**
      *
+     * @var array
+     */
+    protected $hasOne;
+
+    /**
+     *
+     * @var boolean
+     */
+    private $_hasOneParsed = false;
+
+    /**
+     * 
+     * @var array
+     */
+    protected $options;
+    private static $_DAO_CACHE;
+
+    /**
+     *
      * @param \PDO $db
      * @param string $tableName
      */
-    public function __construct(\PDO $db, $tableName = null)
+    public function __construct(\PDO $db, $options = null)
     {
         $this->db = $db;
 
-        if (null === $tableName) {
-            if ($this->tableName) {
-                $tableName = $this->tableName;
-            } else {
-                $tableName = $this->guessTableName();
-            }
+        if ($this->tableName) {
+            $tableName = $this->tableName;
+        } else {
+            $tableName = $this->guessTableName();
+        }
+
+        if (!$options) {
+            $this->setOptions([]);
+        } else {
+            $this->setOptions($options);
         }
 
         $this->setTableName($tableName);
+
+        self::$_DAO_CACHE[spl_object_hash($this->db)][get_class($this)] = $this;
     }
 
     /**
@@ -143,6 +168,21 @@ class DAO
             }
         }
 
+        if (($hasOnes = $this->getHasOne())) {
+            foreach ($hasOnes as $name => $hasOne) {
+                $dao = $this->getDAO($hasOne['daoClass'], $hasOne['options']);
+                $filteredData = [];
+                foreach ($data as $field => $value) {
+
+                    if (strpos($field, $name . '__') !== FALSE) {
+                        $filteredData[str_replace($name . '__', '', $field)] = $value;
+                    }
+                }
+                $compositeEntity = $dao->buildEntity($filteredData);
+                $entity->{'set' . $this->camelize($name)}($compositeEntity);
+            }
+        }
+
         return $entity;
     }
 
@@ -195,7 +235,7 @@ class DAO
      */
     public function find($id)
     {
-        return $this->findOne(array($this->primary . ' = ? ' => $id));
+        return $this->findOne(array("{$this->getTableName()}.$this->primary = ? " => $id));
     }
 
     /**
@@ -250,12 +290,88 @@ class DAO
         return $query;
     }
 
+    protected function generateColumns($prefix = "", &$tables = [])
+    {
+        $tableName = $this->getTableName();
+        
+        $countTables = count($tables);
+        
+        $tableAlias = "joined_$countTables";
+        
+        $columns = implode(',', array_map(function($col) use($tableAlias, $prefix){
+            return "$tableAlias.`$col` as `$prefix$col`";
+        }, $this->getTableColumns()));
+        
+        if (array_search($this->getTableName(), $tables)) {
+            return $columns;
+        }
+        $tables[] = $this->getTableName();
+        if (($hasOnes = $this->getHasOne())) {
+
+            foreach ($hasOnes as $name => $hasOne) {
+                $dao = $this->getDAO($hasOne['daoClass'], $hasOne['options']);
+                $columns .= ',' . $dao->generateColumns($prefix.$name.'__', $tables);
+            }
+        }
+        return $columns;
+    }
+
+    protected function generateJoins($fromAlias, &$joins, &$tables = [])
+    {
+        if( ! $tables){
+            $tables[$fromAlias] = $this->getTableName();
+        }
+        if (($hasOnes = $this->getHasOne())) {
+            foreach ($hasOnes as $name => $hasOne) {
+                $dao = $this->getDAO($hasOne['daoClass'], $hasOne['options']);
+                
+                $daoTable = $dao->getTableName();
+
+                $countTables = count($tables);
+
+                $daoAlias = "joined_$countTables";
+                
+                $joins[] = "LEFT JOIN `{$dao->getTableName()}` $daoAlias ON $fromAlias.`{$hasOne['from']}` = $daoAlias.`{$hasOne['to']}`";
+                
+                if(array_search($daoTable, $tables) === FALSE){
+                    $tables[$daoAlias] = $daoTable;
+                    $dao->generateJoins($daoAlias, $joins, $tables);
+                }
+            }
+        }
+    }
+
     protected function buildSQL($criteria = array(), $limit = null, $offset = null, $order = "")
     {
-        $sql = 'SELECT * FROM ' . $this->getTableName();
+        $tableAlias = 'joined_0';
+        $columns = $this->generateColumns();
+
+        $sql = "SELECT $columns FROM `" . $this->getTableName() . "` as $tableAlias";
+        
+        $joins = [];
+        
+        $tables = [];
+        
+        $this->generateJoins($tableAlias, $joins, $tables);
+
+        if (!empty($joins)) {
+            $sql .= ' ' . implode(' ', $joins);
+        }
+        
 
         if (is_array($criteria) && $criteria) {
-            $sql .= ' WHERE ' . implode(' AND ', array_keys($criteria));
+            $criteriaTransformed = [];
+
+            foreach($criteria as $col => $value) {
+                $colTransformed = $col;
+                foreach ($tables as $alias => $name) {
+                    if(strpos($col, $name.'.') !== FALSE) {
+                        $colTransformed = str_replace($name.'.', $alias.'.', $col);
+                    }
+                }
+                $criteriaTransformed[$colTransformed] = $value;
+            }
+            $sql .= ' WHERE ' . implode(' AND ', array_keys($criteriaTransformed));
         }
 
 
@@ -298,6 +414,17 @@ class DAO
      */
     public function insert($entity)
     {
+        if (($hasOnes = $this->getHasOne())) {
+            foreach ($hasOnes as $name => $hasOne) {
+                $dao = $this->getDAO($hasOne['daoClass'], $hasOne['options']);
+                $compositeEntity = $entity->{'get' . $this->camelize($name)}();
+
+                if ($compositeEntity && !$dao->save($compositeEntity)) {
+                    return 0;
+                }
+            }
+        }
+
         $columns = $this->getTableColumns();
 
         $sql = 'INSERT INTO ' . $this->getTableName() . ' (';
@@ -314,7 +441,7 @@ class DAO
         }
 
         if (!$data) {
-            return;
+            return 0;
         }
 
         $sql .= implode(',', array_keys($data)) . ') VALUES (';
@@ -351,6 +478,17 @@ class DAO
      */
     public function update($entity)
     {
+
+        if (($hasOnes = $this->getHasOne())) {
+            foreach ($hasOnes as $name => $hasOne) {
+                $dao = $this->getDAO($hasOne['daoClass'], $hasOne['options']);
+                $compositeEntity = $entity->{'get' . $this->camelize($name)}();
+
+                if ($compositeEntity && !$dao->save($compositeEntity)) {
+                    return 0;
+                }
+            }
+        }
         $columns = $this->getTableColumns();
 
         $sql = 'UPDATE ' . $this->getTableName() . ' SET ';
@@ -406,20 +544,85 @@ class DAO
 
     public function delete($entity)
     {
-        $sql = 'DELETE FROM `'.$this->getTableName().'` WHERE `'.$this->primary.'` = ?';
+        $sql = 'DELETE FROM `' . $this->getTableName() . '` WHERE `' . $this->primary . '` = ?';
         $query = $this->db->prepare($sql);
-        
-         $idGetter = 'get' . $this->camelize($this->primary);
-         
-         if (method_exists($entity, $idGetter)) {
+
+        $idGetter = 'get' . $this->camelize($this->primary);
+
+        if (method_exists($entity, $idGetter)) {
             $id = $entity->$idGetter();
         } else {
             return 0;
         }
-         
+
         $query->bindValue(1, $id);
-        
+
         return $query->execute();
+    }
+
+    private function parseHasOne()
+    {
+        $hasOne = $this->hasOne;
+
+        if (!$hasOne) {
+            return;
+        }
+
+        $unset = [];
+
+        foreach ($hasOne as $name => $options) {
+            if (is_string($options)) {
+                $unset[] = $name;
+                $name = $options;
+                $options = [];
+            }
+
+            if (empty($options['daoClass'])) {
+                $options['daoClass'] = $this->guessDaoClass($name);
+            }
+            if (empty($options['from'])) {
+                $options['from'] = $name . '_id';
+            }
+            if (empty($options['to'])) {
+                $options['to'] = 'id';
+            }
+            if (empty($options['options'])) {
+                $options['options'] = [];
+            }
+
+            $hasOne[$name] = $options;
+        }
+
+        foreach ($unset as $u) {
+            unset($hasOne[$u]);
+        }
+
+        $this->hasOne = $hasOne;
+    }
+
+    protected function guessDaoClass($entityName)
+    {
+        $classNameSegements = explode('\\', get_class($this));
+
+        array_pop($classNameSegements);
+
+        return implode('\\', $classNameSegements) . '\\' . $entityName . 'DAO';
+    }
+
+    /**
+     * 
+     * @param string $daoClass
+     * @param array $options
+     * @return DAO
+     */
+    protected function getDAO($daoClass, $options = null)
+    {
+        if (!isset(self::$_DAO_CACHE[spl_object_hash($this->db)][$daoClass])) {
+            $dao = new $daoClass($this->db, $options);
+            self::$_DAO_CACHE[spl_object_hash($this->db)][$daoClass] = $dao;
+        }
+
+        return self::$_DAO_CACHE[spl_object_hash($this->db)][$daoClass];
     }
 
     public function getDb()
@@ -448,6 +651,25 @@ class DAO
             $this->tableColumns = $this->fetchColumns();
         }
         return $this->tableColumns;
+    }
+
+    function getHasOne()
+    {
+        if (!$this->_hasOneParsed) {
+            $this->parseHasOne();
+            $this->_hasOneParsed = true;
+        }
+        return $this->hasOne;
+    }
+
+    public function getOptions()
+    {
+        return $this->options;
+    }
+
+    public function setOptions($options)
+    {
+        $this->options = $options;
     }
 
 }
