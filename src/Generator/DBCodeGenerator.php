@@ -26,7 +26,7 @@ abstract class DBCodeGenerator
      */
     protected $options;
 
-    function __construct(\PDO $db, $table, $options)
+    function __construct(\PDO $db, $table, &$options)
     {
         $this->db = $db;
         $this->table = $table;
@@ -48,7 +48,7 @@ abstract class DBCodeGenerator
         return $this->table;
     }
 
-    public function getOptions()
+    public function &getOptions()
     {
         return $this->options;
     }
@@ -64,14 +64,8 @@ abstract class DBCodeGenerator
         $this->table = $table;
         return $this;
     }
-
-    public function setOptions($options)
-    {
-        $this->options = $options;
-        return $this;
-    }
     
-    public function getOption($key)
+    public function &getOption($key)
     {
         if( !empty($this->options[$key])){
             return $this->options[$key];

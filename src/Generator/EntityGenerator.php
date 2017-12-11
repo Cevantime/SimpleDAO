@@ -49,14 +49,19 @@ class EntityGenerator extends DBCodeGenerator
         'set' => 'string',
     ];
 
+    /**
+     * 
+     * @return ClassType
+     */
     public function generate()
     {
         $namespace = new PhpNamespace(ltrim($this->getOption('namespace') . '\Entity', '\\'));
 
-        $generator = new ClassType(Inflector::camelize($this->getTable()), $namespace);
+        $entityName = Inflector::camelize($this->getTable());
+        $generator = new ClassType($entityName, $namespace);
 
         $fieldInfosStmt = $this->getDb()->prepare('SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS'
-                . ' WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?');
+            . ' WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?');
 
         $fieldInfosStmt->bindValue(1, $this->getOption('dbname'));
         $fieldInfosStmt->bindValue(2, $this->getTable());
@@ -65,48 +70,76 @@ class EntityGenerator extends DBCodeGenerator
 
         $fieldInfos = $fieldInfosStmt->fetchAll();
 
-        $constraintInfosStmt = $this->getDb()->prepare("SELECT REFERENCED_TABLE_NAME, FOR_COL_NAME, REF_COL_NAME "
-                . "FROM INFORMATION_SCHEMA.`REFERENTIAL_CONSTRAINTS`,INFORMATION_SCHEMA.INNODB_SYS_FOREIGN_COLS "
-                . "WHERE CONSTRAINT_SCHEMA = :dbname "
-                . "AND TABLE_NAME = :table "
-                . "AND CONCAT(INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS.`CONSTRAINT_SCHEMA`,'/',INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS.`CONSTRAINT_NAME` ) = INFORMATION_SCHEMA.INNODB_SYS_FOREIGN_COLS.ID");
+        $hasM = $this->getOption('_hasMany');
+        $hasMany =& $hasM;
+        
+        $hasO = $this->getOption('_hasOne');
+        $hasOne =& $hasO;
+        
+        if( !empty($hasOne[$this->getTable()])) {
+            
+            if (count($hasOne[$this->getTable()]) === 2 && count($hasOne[$this->getTable()]) === count($fieldInfos)) {
+                for ($i = 0; $i < count($hasOne[$hasOne[$this->getTable()][0]['table']]); $i++){
+                    if($hasOne[$hasOne[$this->getTable()][0]['table']][$i]['table'] === $this->getTable()){
+                        unset($hasOne[$hasOne[$this->getTable()][0]['table']][$i]);
+                    }
+                }
+                for ($i = 0; $i < count($hasOne[$hasOne[$this->getTable()][1]['table']]); $i++){
+                    if($hasOne[$hasOne[$this->getTable()][1]['table']][$i]['table'] === $this->getTable()){
+                        unset($hasOne[$hasOne[$this->getTable()][1]['table']][$i]);
+                    }
+                }
+                $hasMany[$hasOne[$this->getTable()][0]['table']][] = [
+                    "through" => $this->getTable(),
+                    "from" => $hasOne[$this->getTable()][0],
+                    "to" => $hasOne[$this->getTable()][1],
+                    "table" => $hasOne[$this->getTable()][1]['table']
+                ];
 
-        $constraintInfosStmt->bindValue(':dbname', $this->getOption('dbname'));
-        $constraintInfosStmt->bindValue(':table', $this->getTable());
-        
-        $constraintInfosStmt->execute();
+                $hasMany[$hasOne[$this->getTable()][1]['table']][] = [
+                    "through" => $this->getTable(),
+                    "from" => $hasOne[$this->getTable()][1],
+                    "to" => $hasOne[$this->getTable()][0],
+                    'table' => $hasOne[$this->getTable()][0]['table']
+                ];
 
-        $constraintInfos = $constraintInfosStmt->fetchAll();
-        
-        var_dump($constraintInfos);
-        
+                return null;
+            }
+        }
+
         foreach ($fieldInfos as $fieldInfo) {
             $name = null;
-            
-            foreach ($constraintInfos as $cInfo) {
-                if ($cInfo['FOR_COL_NAME'] === $fieldInfo['COLUMN_NAME']) {
-                    $type = $this->getOption('namespace') . '\\Entity\\'.Inflector::camelize($cInfo['REFERENCED_TABLE_NAME']);
-                    $name = lcfirst(Inflector::camelize($cInfo['REFERENCED_TABLE_NAME']));
-                    break;
+            if( ! empty($hasOne[$this->getTable()])) {
+                $continue = false;
+                foreach ($hasOne[$this->getTable()] as $ho) {
+                    if ($ho['from'] === $fieldInfo['COLUMN_NAME']) {
+                        $continue = true;
+                    }
+                }
+                if($continue) {
+                    continue;
                 }
             }
             
-            if( ! isset($name)) {
+            if (!isset($name)) {
                 $name = lcfirst(Inflector::camelize($fieldInfo['COLUMN_NAME']));
                 $type = self::$TYPE_MAPPING[$fieldInfo['DATA_TYPE']];
             }
+            
+
             $generator->addProperty($name)
-                    ->addComment("")
-                    ->addComment("@var $type $name")
-                    ->setVisibility('private');
+                ->addComment("$name of the $entityName")
+                ->addComment("@var $type $name")
+                ->setVisibility('private');
+            
 
             $getter = $generator->addMethod('get' . ucfirst($name))
-                    ->setVisibility('public')
-                    ->addBody('return $this->' . $name . ';');
+                ->setVisibility('public')
+                ->addBody('return $this->' . $name . ';');
 
             $setter = $generator->addMethod('set' . ucfirst($name))
-                    ->setVisibility('public')
-                    ->addBody('$this->' . $name . ' = $' . $name . ';');
+                ->setVisibility('public')
+                ->addBody('$this->' . $name . ' = $' . $name . ';');
 
             $parameter = $setter->addParameter($name);
 
@@ -115,7 +148,7 @@ class EntityGenerator extends DBCodeGenerator
             }
         }
 
-        return "<?php\n\n" . $namespace . $generator->__toString();
+        return $generator;
     }
 
 }

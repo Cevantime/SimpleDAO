@@ -2,6 +2,7 @@
 
 namespace SimpleDAO\Generator\Command;
 
+use Nette\PhpGenerator\ClassType;
 use Nette\Utils\FileSystem;
 use PDO;
 use SimpleDAO\Generator\EntityGenerator;
@@ -59,15 +60,15 @@ class GenerateEntities extends Command
     protected function configure()
     {
         $this->setName('generate:classes')
-                ->setDescription('(Re)generates all classes (entities and dao) associated with a database connection')
-                ->addOption('dbms', 'd', InputOption::VALUE_REQUIRED, 'The dbms used (mysql, postgre...)', 'mysql')
-                ->addOption('host', 'o', InputOption::VALUE_REQUIRED, 'The ip of the host', '127.0.0.1')
-                ->addOption('dbname', 'b', InputOption::VALUE_REQUIRED, 'The name of the database')
-                ->addOption('user', 'u', InputOption::VALUE_REQUIRED, 'The username of the database user')
-                ->addOption('password', 'p', InputOption::VALUE_REQUIRED, 'The password of the user')
-                ->addOption('charset', 'c', InputOption::VALUE_REQUIRED, 'The password of the user')
-                ->addOption('namespace', 'a', InputOption::VALUE_REQUIRED, 'The password of the user')
-                ->addOption('folder', 'f', InputOption::VALUE_REQUIRED, 'The password of the user')
+            ->setDescription('(Re)generates all classes (entities and dao) associated with a database connection')
+            ->addOption('dbms', 'd', InputOption::VALUE_REQUIRED, 'The dbms used (mysql, postgre...)', 'mysql')
+            ->addOption('host', 'o', InputOption::VALUE_REQUIRED, 'The ip of the host', '127.0.0.1')
+            ->addOption('dbname', 'b', InputOption::VALUE_REQUIRED, 'The name of the database')
+            ->addOption('user', 'u', InputOption::VALUE_REQUIRED, 'The username of the database user')
+            ->addOption('password', 'p', InputOption::VALUE_REQUIRED, 'The password of the user')
+            ->addOption('charset', 'c', InputOption::VALUE_REQUIRED, 'The password of the user')
+            ->addOption('namespace', 'a', InputOption::VALUE_REQUIRED, 'The password of the user')
+            ->addOption('folder', 'f', InputOption::VALUE_REQUIRED, 'The password of the user')
         ;
     }
 
@@ -117,35 +118,138 @@ class GenerateEntities extends Command
             $output->writeln('No database selected !');
             return;
         }
-        
+
         if ($options['dbms'] != 'mysql') {
             $output->writeln('Only mysql is supported !');
             return;
         }
 
-        $pdo = new PDO("mysql:host:{$options['host']};dbname:{$options['dbname']};charset:{$options['charset']}", $options['user'], $options['password'],
-                [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $pdo = new PDO("mysql:host:{$options['host']};dbname:{$options['dbname']};charset:{$options['charset']}", $options['user'], $options['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+
+        $constraintInfosStmt = $pdo->prepare(""
+            . "SELECT TABLE_NAME,COLUMN_NAME,CONSTRAINT_NAME, REFERENCED_TABLE_NAME,REFERENCED_COLUMN_NAME "
+            . "FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE "
+            . "WHERE REFERENCED_TABLE_SCHEMA = ?");
+
+        $constraintInfosStmt->bindValue(1, $options['dbname']);
+
+        $constraintInfosStmt->execute();
+
+        $constraintInfos = $constraintInfosStmt->fetchAll();
+
+        $hasOne = [];
+        $hasMany = [];
+        foreach ($constraintInfos as $cInfo) {
+            $tableName = $cInfo['TABLE_NAME'];
+            $refTable = $cInfo["REFERENCED_TABLE_NAME"];
+            $hasOne[$tableName][] = [
+                "from" => $cInfo["COLUMN_NAME"],
+                "to" => $cInfo["REFERENCED_COLUMN_NAME"],
+                "table" => $refTable
+            ];
+
+            $hasMany[$refTable][] = [
+                "from" => $cInfo["REFERENCED_COLUMN_NAME"],
+                "to" => $cInfo["COLUMN_NAME"],
+                "table" => $tableName,
+                "through" => false
+            ];
+        }
+
+        $options['_hasOne'] = $hasOne;
+        $options['_hasMany'] = $hasMany;
 
         $stmtTableInfos = $pdo->prepare('SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?');
-        
+
         $stmtTableInfos->bindValue(1, $options['dbname']);
-        
+
         $stmtTableInfos->execute();
-        
+
         $infos = $stmtTableInfos->fetchAll(PDO::FETCH_ASSOC);
+
+        $entityGenerators = [];
+
+        foreach ($infos as $info) {
+            $tableName = $info['TABLE_NAME'];
+            $entityGenerator = new EntityGenerator($pdo, $tableName, $options);
+            $entityGenerator = $entityGenerator->generate();
+            if ($entityGenerator) {
+                $entityGenerators[$tableName] = $entityGenerator;
+            }
+        }
+
+        foreach ($options['_hasOne'] as $table => $ho) {
+            if(empty($entityGenerators[$table])){
+                continue;
+            }
+            $generator = $entityGenerators[$table];
+
+            $generator instanceof ClassType;
+            
+            foreach ($ho as $table => $oneOpts) {
+                $type = $options['namespace'] . '\\Entity\\' . Inflector::camelize($oneOpts['table']);
+                $name = lcfirst(Inflector::camelize($oneOpts['table']));
+                $entityName = Inflector::camelize($table);
+                $generator->addProperty($name)
+                    ->addComment("$name of the $entityName")
+                    ->addComment("@var $type $name")
+                    ->setVisibility('private');
+
+
+                $getter = $generator->addMethod('get' . ucfirst($name))
+                    ->setVisibility('public')
+                    ->addBody('return $this->' . $name . ';');
+
+                $setter = $generator->addMethod('set' . ucfirst($name))
+                    ->setVisibility('public')
+                    ->addBody('$this->' . $name . ' = $' . $name . ';');
+
+                $parameter = $setter->addParameter($name);
+
+                if (strnatcmp(phpversion(), '7.0.0') >= 0) {
+                    $parameter->setTypeHint($type);
+                }
+            }
+        }
+
+        var_dump($options['_hasMany']);
         
-        $entityFolder = $options['folder'].'/Entity';
+        foreach ($options['_hasMany'] as $table => $hm) {
+            $generator = $entityGenerators[$table];
+
+            $generator instanceof ClassType;
+
+            foreach ($hm as $manyOpts) {
+                $entityName = Inflector::camelize($manyOpts['table']);
+                $type = $options['namespace'] . '\\Entity\\' . $entityName;
+                $propName = lcfirst(Inflector::camelize($manyOpts['table'])) . 's';
+                $generator->addProperty($propName)
+                    ->addComment("$propName of the $entityName")
+                    ->addComment("@var {$type}[] $propName");
+                $generator->addMethod('get' . ucfirst($propName))
+                    ->addBody('return $this->' . $propName . ';');
+
+                $setter = $generator->addMethod('set' . ucfirst($propName))
+                    ->setVisibility('public')
+                    ->addBody('$this->' . $propName . ' = $' . $propName . ';');
+
+                $parameter = $setter->addParameter($propName);
+
+                if (strnatcmp(phpversion(), '7.0.0') >= 0) {
+                    $parameter->setTypeHint($type);
+                }
+            }
+        }
+
+        $entityFolder = $options['folder'] . '/Entity';
         FileSystem::delete($entityFolder);
-        
-        $daoFolder = $options['folder'].'/DAO';
+
+        $daoFolder = $options['folder'] . '/DAO';
         FileSystem::delete($daoFolder);
-        
-        foreach($infos as $info) {
-            $entityGenerator = new EntityGenerator($pdo, $info['TABLE_NAME'], $options);
-            $codeStr = $entityGenerator->generate();
-            
-            FileSystem::write($entityFolder.'/'.Inflector::camelize($info['TABLE_NAME']).'.php',$codeStr);
-            
+
+        foreach ($entityGenerators as $table => $generator) {
+            $entityName = Inflector::camelize($table);
+            FileSystem::write($entityFolder . '/' . $entityName . '.php', "<?php\n\n" . $generator->__toString());
         }
     }
 
